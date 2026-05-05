@@ -5,7 +5,7 @@ from discord.ext import commands
 import ollama
 load_dotenv()
 
-import json
+import asyncio
 from bs4 import BeautifulSoup
 import requests
 
@@ -58,47 +58,57 @@ def web_search(query):
     except Exception as e:
         return f"Search error: {str(e)}"
 
-def needs_search(question):
-    response = ollama.chat(
-        model='llama3',
-        messages=[
-            {
-                "role": "system",
-                "content": "Answer ONLY 'yes' or 'no'. Does this question require real-time or external data?"
-            },
-            {"role": "user", "content": question}
-        ]
-    )
-    
-    return "yes" in response['message']['content'].lower()
-
 @bot.command()
 async def hi(ctx):
     await ctx.send("Hi!")
 
 @bot.command()
+# async def ask(ctx, *, question):
+#     async with ctx.typing():
+#         response = ollama.chat(
+#             model='llama3',
+#             messages=[
+#                 {"role": "user", "content": question}
+#             ]
+#         )
+#         reply = response['message']['content']
+#         await ctx.send(reply)
 async def ask(ctx, *, question):
     async with ctx.typing():
-        if needs_search(question):
-            result = web_search(question)
+        response = await asyncio.to_thread(
+            ollama.chat,
+            model="llama3",
+            messages=[
+                {"role": "system", "content":"summarize to be less than 2000 characters"},
+                {"role": "user", "content": question}
+            ]
+        )
+        try:
+            await ctx.send(response['message']['content'])
+        except Exception as e:
+            if "2000 or fewer" in str(e):
+                await ctx.send("Answer exceed 2000 characters")
 
-            context = "\n\n".join(result)
-            response = ollama.chat(
-                model='llama3',
-                messages=[
-                    {"role": "system", "content": "Use this data to answer."},
-                    {"role": "system", "content": f"Use this real-time data:\n{context}"},
-                    {"role": "user", "content": question}
-                ]
-            )
-        else:
-            response = ollama.chat(
-                model='llama3',
-                messages=[
-                    {"role": "user", "content": question}
-                ]
-            )
+@bot.command()
+async def search(ctx, *, question):
+    async with ctx.typing():
+        result = await asyncio.to_thread(web_search, question)
+        context = "\n\n".join(result)
+        response = await asyncio.to_thread(
+            ollama.chat,
+            model='llama3',
+            messages=[
+                {"role": "system", "content":"summarize to be less than 2000 characters"},
+                {"role": "system", "content": "Use this data to answer."},
+                {"role": "system", "content": f"Use this real-time data:\n{context}"},
+                {"role": "user", "content": question}
+            ]
+        )
         reply = response['message']['content']
-        await ctx.send(reply)
+        try: 
+            await ctx.send(reply)
+        except Exception as e:
+            if "2000 or fewer" in str(e):
+                await ctx.send("Answer exceed 2000 characters")
 
 bot.run(discord_token)
