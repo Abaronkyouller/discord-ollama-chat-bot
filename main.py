@@ -3,7 +3,11 @@ from dotenv import load_dotenv
 import discord
 from discord.ext import commands
 import ollama
-load_dotenv() 
+load_dotenv()
+
+import json
+from bs4 import BeautifulSoup
+import requests
 
 api_key = os.getenv("SERPAPI_API_KEY")
 discord_token = os.getenv("DISCORD_TOKEN")
@@ -13,7 +17,20 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!",  intents=intents)
 
-import requests
+def access_another_link(url):
+    try:
+        res = requests.get(url=url, headers={"User-Agent": "Mozilla/5.0"})
+        html = res.text
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+        text = soup.get_text(separator=" ")
+        text = " ".join(text.split())[:1000]
+        return text
+
+    except Exception as e:
+        print("error")
+        return ""
 
 def web_search(query):
     url = "https://serpapi.com/search.json"
@@ -29,7 +46,12 @@ def web_search(query):
         data = res.json()
 
         if "organic_results" in data and len(data["organic_results"]) > 0:
-            return data["organic_results"][0]["snippet"]
+            results = data["organic_results"][0]
+            snippets = results["snippet"] if "snippet" in results else ""
+            links = results["link"] if "link" in results else ""
+            links_access_results = access_another_link(links)
+
+            return snippets+links_access_results
 
         return "No useful results found."
 
@@ -60,11 +82,12 @@ async def ask(ctx, *, question):
         if needs_search(question):
             result = web_search(question)
 
+            context = "\n\n".join(result)
             response = ollama.chat(
                 model='llama3',
                 messages=[
                     {"role": "system", "content": "Use this data to answer."},
-                    {"role": "system", "content": f"Use this real-time data:\n{result}"},
+                    {"role": "system", "content": f"Use this real-time data:\n{context}"},
                     {"role": "user", "content": question}
                 ]
             )
@@ -76,7 +99,6 @@ async def ask(ctx, *, question):
                 ]
             )
         reply = response['message']['content']
-        print(reply)
         await ctx.send(reply)
 
 bot.run(discord_token)
